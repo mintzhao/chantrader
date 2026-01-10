@@ -103,7 +103,12 @@ jobs:
             --hidden-import=tkinter.ttk `
             --hidden-import=tkinter.messagebox `
             --hidden-import=tkinter.filedialog `
+            --hidden-import=chan_viewer_tk `
+            --hidden-import=chan_viewer_multilevel_tk `
+            --collect-submodules=akshare `
+            --collect-submodules=baostock `
             --paths=. `
+            --paths=App `
             App/chan_app.py
 
       - name: Create zip archive

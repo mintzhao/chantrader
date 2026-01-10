@@ -12,12 +12,36 @@ Powered by chan.py
     python App/chan_app.py
 """
 import sys
+import os
 from pathlib import Path
+
+# PyInstaller 打包兼容：设置正确的模块搜索路径
+def setup_paths():
+    """设置模块搜索路径，兼容 PyInstaller 打包"""
+    if getattr(sys, 'frozen', False):
+        # PyInstaller 打包后运行
+        # sys._MEIPASS 是 PyInstaller 解压临时目录
+        base_path = sys._MEIPASS
+    else:
+        # 普通 Python 运行
+        base_path = str(Path(__file__).resolve().parent.parent)
+
+    # 将基础路径加入 sys.path
+    if base_path not in sys.path:
+        sys.path.insert(0, base_path)
+
+    # 设置工作目录（用于加载数据文件如 stock_list.csv）
+    if getattr(sys, 'frozen', False):
+        # 打包后，数据文件在 _MEIPASS 目录
+        os.chdir(base_path)
+
+    return base_path
+
+# 在导入其他模块前设置路径
+BASE_PATH = setup_paths()
+
 import tkinter as tk
 from tkinter import ttk
-
-# 将项目根目录加入路径
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
 class ChanApp(tk.Tk):

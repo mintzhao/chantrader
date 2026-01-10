@@ -47,8 +47,17 @@ class StdoutRedirector(io.StringIO):
         if self.original_stream:
             self.original_stream.flush()
 
-# 将项目根目录加入路径
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# 将项目根目录加入路径（兼容 PyInstaller 打包）
+def _setup_path():
+    if getattr(sys, 'frozen', False):
+        # PyInstaller 打包后运行，使用 _MEIPASS
+        base_path = sys._MEIPASS
+    else:
+        # 普通 Python 运行
+        base_path = str(Path(__file__).resolve().parent.parent)
+    if base_path not in sys.path:
+        sys.path.insert(0, base_path)
+_setup_path()
 
 import matplotlib
 matplotlib.use('TkAgg')

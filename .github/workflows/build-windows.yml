@@ -27,30 +27,77 @@ jobs:
 
       - name: Build executable
         run: |
-          pyinstaller --name="缠论分析器" `
-            --onefile `
+          pyinstaller --name="ChanTrader" `
+            --onedir `
             --windowed `
             --noconfirm `
             --clean `
-            --add-data="App/stock_list.csv;App" `
+            --add-data="App;App" `
+            --add-data="Chan;Chan" `
+            --add-data="ChanModel;ChanModel" `
+            --add-data="Common;Common" `
+            --add-data="DataAPI;DataAPI" `
+            --add-data="KLine;KLine" `
+            --add-data="Math;Math" `
+            --add-data="Plot;Plot" `
+            --add-data="BuySellPoint;BuySellPoint" `
+            --add-data="Seg;Seg" `
+            --add-data="ZS;ZS" `
+            --add-data="Bi;Bi" `
+            --add-data="Combiner;Combiner" `
+            --add-data="ChanConfig.py;." `
+            --hidden-import=Chan `
+            --hidden-import=ChanConfig `
+            --hidden-import=ChanModel `
+            --hidden-import=Common `
+            --hidden-import=Common.CEnum `
+            --hidden-import=Common.CTime `
+            --hidden-import=Common.ChanException `
+            --hidden-import=DataAPI `
+            --hidden-import=DataAPI.AkshareAPI `
+            --hidden-import=DataAPI.BaoStockAPI `
+            --hidden-import=KLine `
+            --hidden-import=Math `
+            --hidden-import=Plot `
+            --hidden-import=Plot.PlotDriver `
+            --hidden-import=Plot.PlotMeta `
+            --hidden-import=BuySellPoint `
+            --hidden-import=Seg `
+            --hidden-import=ZS `
+            --hidden-import=Bi `
+            --hidden-import=Combiner `
             --hidden-import=akshare `
             --hidden-import=baostock `
             --hidden-import=pandas `
             --hidden-import=numpy `
             --hidden-import=matplotlib `
+            --hidden-import=matplotlib.pyplot `
+            --hidden-import=matplotlib.figure `
             --hidden-import=matplotlib.backends.backend_tkagg `
+            --hidden-import=matplotlib.patches `
+            --hidden-import=tkinter `
+            --hidden-import=tkinter.ttk `
+            --hidden-import=tkinter.messagebox `
+            --hidden-import=tkinter.filedialog `
+            --collect-all=akshare `
+            --collect-all=baostock `
+            --paths=. `
             App/chan_app.py
+
+      - name: Create zip archive
+        run: |
+          Compress-Archive -Path dist/ChanTrader/* -DestinationPath dist/ChanTrader-Windows.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ChanAnalyzer-Windows
-          path: dist/缠论分析器.exe
+          name: ChanTrader-Windows
+          path: dist/ChanTrader-Windows.zip
 
       - name: Create Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          files: dist/缠论分析器.exe
+          files: dist/ChanTrader-Windows.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

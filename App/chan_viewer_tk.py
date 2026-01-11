@@ -157,7 +157,7 @@ class StockSearchEntry(ttk.Frame):
     """
     全量A股股票搜索输入框
     - 简单的输入框 + 搜索结果列表
-    - 支持代码、名称模糊搜索
+    - 支持代码、名称模糊搜索（支持中文）
     """
     def __init__(self, master, textvariable=None, width=25, **kwargs):
         super().__init__(master, **kwargs)
@@ -165,6 +165,7 @@ class StockSearchEntry(ttk.Frame):
         self.text_var = textvariable or tk.StringVar()
         self.stock_list: List[tuple] = []  # [(code, name), ...]
         self.filtered_list: List[tuple] = []
+        self._search_job = None  # 防抖动定时器
 
         # 输入框
         self.entry = ttk.Entry(self, textvariable=self.text_var, width=width)
@@ -178,8 +179,10 @@ class StockSearchEntry(ttk.Frame):
         self.popup = None
         self.listbox = None
 
-        # 绑定事件
-        self.entry.bind('<KeyRelease>', self.on_key_release)
+        # 使用 trace 监听文本变化（支持中文输入法）
+        self.text_var.trace_add('write', self._on_text_changed)
+
+        # 绑定键盘事件（用于导航）
         self.entry.bind('<Return>', self.on_enter)
         self.entry.bind('<Escape>', self.hide_popup)
         self.entry.bind('<Down>', self.focus_listbox)
@@ -187,15 +190,17 @@ class StockSearchEntry(ttk.Frame):
         # 直接加载股票列表（读本地文件很快）
         self.stock_list = load_stock_list()
 
-    def do_search(self):
-        """执行搜索"""
-        self.on_key_release(None)
+    def _on_text_changed(self, *args):
+        """文本变化时触发搜索（带防抖动）"""
+        # 取消之前的搜索任务
+        if self._search_job:
+            self.after_cancel(self._search_job)
+        # 延迟 200ms 执行搜索，支持中文输入法组合
+        self._search_job = self.after(200, self._do_search_internal)
 
-    def on_key_release(self, event):
-        """键盘输入时搜索"""
-        if event and event.keysym in ('Up', 'Down', 'Return', 'Escape', 'Tab'):
-            return
-
+    def _do_search_internal(self):
+        """实际执行搜索"""
+        self._search_job = None
         keyword = self.text_var.get().strip().lower()
         if len(keyword) < 1:
             self.hide_popup()
@@ -216,6 +221,10 @@ class StockSearchEntry(ttk.Frame):
             self.show_popup()
         else:
             self.hide_popup()
+
+    def do_search(self):
+        """执行搜索"""
+        self._do_search_internal()
 
     def show_popup(self):
         """显示搜索结果列表"""

@@ -159,13 +159,14 @@ def load_stock_list() -> List[tuple]:
 
 
 class StockSearchEntry(ttk.Frame):
-    """股票搜索输入框"""
+    """股票搜索输入框（支持中文）"""
     def __init__(self, master, textvariable=None, width=25, **kwargs):
         super().__init__(master, **kwargs)
 
         self.text_var = textvariable or tk.StringVar()
         self.stock_list: List[tuple] = []
         self.filtered_list: List[tuple] = []
+        self._search_job = None  # 防抖动定时器
 
         self.entry = ttk.Entry(self, textvariable=self.text_var, width=width)
         self.entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -176,20 +177,25 @@ class StockSearchEntry(ttk.Frame):
         self.popup = None
         self.listbox = None
 
-        self.entry.bind('<KeyRelease>', self.on_key_release)
+        # 使用 trace 监听文本变化（支持中文输入法）
+        self.text_var.trace_add('write', self._on_text_changed)
+
+        # 绑定键盘事件（用于导航）
         self.entry.bind('<Return>', self.on_enter)
         self.entry.bind('<Escape>', self.hide_popup)
         self.entry.bind('<Down>', self.focus_listbox)
 
         self.stock_list = load_stock_list()
 
-    def do_search(self):
-        self.on_key_release(None)
+    def _on_text_changed(self, *args):
+        """文本变化时触发搜索（带防抖动）"""
+        if self._search_job:
+            self.after_cancel(self._search_job)
+        self._search_job = self.after(200, self._do_search_internal)
 
-    def on_key_release(self, event):
-        if event and event.keysym in ('Up', 'Down', 'Return', 'Escape', 'Tab'):
-            return
-
+    def _do_search_internal(self):
+        """实际执行搜索"""
+        self._search_job = None
         keyword = self.text_var.get().strip().lower()
         if len(keyword) < 1:
             self.hide_popup()
@@ -209,6 +215,9 @@ class StockSearchEntry(ttk.Frame):
             self.show_popup()
         else:
             self.hide_popup()
+
+    def do_search(self):
+        self._do_search_internal()
 
     def show_popup(self):
         if not self.filtered_list:

@@ -9,3 +9,4 @@ OpenConfig.yaml
 gotify_push.py
 cos_config.yaml
 .spec-workflow/
+stock_history.json

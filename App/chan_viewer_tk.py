@@ -69,6 +69,7 @@ from Chan import CChan
 from ChanConfig import CChanConfig
 from Common.CEnum import AUTYPE, DATA_SRC, KL_TYPE
 from stock_history import get_stock_history
+from stock_realtime import get_stock_realtime_data, StockRealtimeData
 
 
 # K线周期映射（按指定顺序）
@@ -554,9 +555,31 @@ class ChanViewerWindow(tk.Toplevel):
         self.canvas = FigureCanvasTkAgg(self.fig, master=chart_frame)
         self.canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
 
-        # 右侧面板（选项卡：图例 + 日志）
+        # 右侧面板（选项卡：实时行情 + 图例 + 日志）
         right_panel = ttk.Notebook(content_frame)
         right_panel.grid(row=0, column=1, sticky="ns", padx=(5, 0))
+
+        # 实时行情标签页
+        realtime_frame = ttk.Frame(right_panel, padding="5")
+        right_panel.add(realtime_frame, text="实时行情")
+
+        # 实时行情文本框
+        self.realtime_text = tk.Text(realtime_frame, width=22, height=25, font=("Consolas", 9),
+                                      bg="#f0f8ff", relief=tk.FLAT, wrap=tk.WORD)
+        self.realtime_text.pack(fill=tk.BOTH, expand=True)
+
+        # 配置实时行情标签样式
+        self.realtime_text.tag_configure("title", font=("Arial", 11, "bold"), foreground="#333333")
+        self.realtime_text.tag_configure("price_up", foreground="#ff4444", font=("Consolas", 10, "bold"))
+        self.realtime_text.tag_configure("price_down", foreground="#00aa00", font=("Consolas", 10, "bold"))
+        self.realtime_text.tag_configure("price_flat", foreground="#666666", font=("Consolas", 10, "bold"))
+        self.realtime_text.tag_configure("label", foreground="#666666")
+        self.realtime_text.tag_configure("value", foreground="#333333")
+        self.realtime_text.tag_configure("highlight", foreground="#0066cc", font=("Consolas", 9, "bold"))
+
+        # 刷新实时行情按钮
+        refresh_realtime_btn = ttk.Button(realtime_frame, text="刷新行情", command=self.refresh_realtime_data)
+        refresh_realtime_btn.pack(pady=(5, 0))
 
         # 图例标签页
         legend_frame = ttk.Frame(right_panel, padding="5")
@@ -846,6 +869,9 @@ class ChanViewerWindow(tk.Toplevel):
         # 绑制图表
         self.plot_chart()
 
+        # 刷新实时行情数据
+        self.refresh_realtime_data()
+
         # 统计信息
         kl_data = chan[0]
         bi_count = len(kl_data.bi_list)
@@ -864,6 +890,110 @@ class ChanViewerWindow(tk.Toplevel):
         self.analyze_btn.config(text="分析")
         messagebox.showerror("分析错误", f"分析失败:\n{error_msg}")
         self.status_var.set('分析失败')
+
+    def refresh_realtime_data(self):
+        """刷新实时行情数据"""
+        code = self.get_current_code()
+        if not code:
+            return
+
+        # 在后台线程获取实时数据
+        def fetch_data():
+            try:
+                data = get_stock_realtime_data(code)
+                if data:
+                    self.after(0, lambda: self.update_realtime_display(data))
+                else:
+                    self.after(0, lambda: self._show_realtime_error("无法获取实时数据"))
+            except Exception as e:
+                self.after(0, lambda msg=str(e): self._show_realtime_error(msg))
+
+        threading.Thread(target=fetch_data, daemon=True).start()
+
+    def _show_realtime_error(self, error_msg: str):
+        """显示实时数据获取错误"""
+        if not hasattr(self, 'realtime_text'):
+            return
+        self.realtime_text.config(state=tk.NORMAL)
+        self.realtime_text.delete(1.0, tk.END)
+        self.realtime_text.insert(tk.END, f"获取实时数据失败:\n{error_msg}\n\n点击\"刷新行情\"重试")
+        self.realtime_text.config(state=tk.DISABLED)
+
+    def update_realtime_display(self, data: StockRealtimeData):
+        """更新实时行情显示"""
+        if not hasattr(self, 'realtime_text'):
+            return
+
+        self.realtime_text.config(state=tk.NORMAL)
+        self.realtime_text.delete(1.0, tk.END)
+
+        # 标题：股票名称
+        self.realtime_text.insert(tk.END, f"{data.name}\n", "title")
+        self.realtime_text.insert(tk.END, f"代码: {data.code}\n\n", "label")
+
+        # 当前价格和涨跌
+        price_tag = "price_up" if data.change_pct > 0 else ("price_down" if data.change_pct < 0 else "price_flat")
+        self.realtime_text.insert(tk.END, f"{data.latest_price:.2f}", price_tag)
+        self.realtime_text.insert(tk.END, f"  {data.change_pct:+.2f}%\n\n", price_tag)
+
+        # 关键指标（用户要求的）
+        self.realtime_text.insert(tk.END, "━━ 核心指标 ━━\n", "highlight")
+
+        display_data = data.get_display_dict()
+
+        # 用户特别关注的指标
+        key_fields = [
+            ("总市值", display_data["总市值"]),
+            ("流通市值", display_data["流通市值"]),
+            ("今开", display_data["今开"]),
+            ("换手率", display_data["换手率"]),
+            ("量比", display_data["量比"]),
+        ]
+
+        for label, value in key_fields:
+            self.realtime_text.insert(tk.END, f"{label}: ", "label")
+            self.realtime_text.insert(tk.END, f"{value}\n", "value")
+
+        self.realtime_text.insert(tk.END, "\n━━ 价格信息 ━━\n", "highlight")
+
+        price_fields = [
+            ("最高", display_data["最高"]),
+            ("最低", display_data["最低"]),
+            ("昨收", display_data["昨收"]),
+            ("均价", display_data["均价"]),
+        ]
+
+        for label, value in price_fields:
+            self.realtime_text.insert(tk.END, f"{label}: ", "label")
+            self.realtime_text.insert(tk.END, f"{value}\n", "value")
+
+        self.realtime_text.insert(tk.END, "\n━━ 成交信息 ━━\n", "highlight")
+
+        volume_fields = [
+            ("成交量", display_data["成交量"]),
+            ("成交额", display_data["成交额"]),
+        ]
+
+        for label, value in volume_fields:
+            self.realtime_text.insert(tk.END, f"{label}: ", "label")
+            self.realtime_text.insert(tk.END, f"{value}\n", "value")
+
+        self.realtime_text.insert(tk.END, "\n━━ 涨跌限制 ━━\n", "highlight")
+
+        limit_fields = [
+            ("涨停价", display_data["涨停价"]),
+            ("跌停价", display_data["跌停价"]),
+            ("行业", display_data["行业"]),
+        ]
+
+        for label, value in limit_fields:
+            self.realtime_text.insert(tk.END, f"{label}: ", "label")
+            self.realtime_text.insert(tk.END, f"{value}\n", "value")
+
+        # 更新时间
+        self.realtime_text.insert(tk.END, f"\n更新: {data.update_time.strftime('%H:%M:%S')}", "label")
+
+        self.realtime_text.config(state=tk.DISABLED)
 
     def plot_chart(self):
         """绘制图表（自适应窗口大小）"""

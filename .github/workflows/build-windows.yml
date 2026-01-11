@@ -106,6 +106,7 @@ jobs:
             --hidden-import=chan_viewer_tk `
             --hidden-import=chan_viewer_multilevel_tk `
             --hidden-import=stock_history `
+            --hidden-import=stock_realtime `
             --collect-submodules=akshare `
             --collect-submodules=baostock `
             --collect-data=akshare `

@@ -46,6 +46,7 @@ from matplotlib.figure import Figure
 from Chan import CChan
 from ChanConfig import CChanConfig
 from Common.CEnum import AUTYPE, DATA_SRC, KL_TYPE
+from stock_history import get_stock_history
 
 
 # K线周期映射
@@ -315,7 +316,17 @@ class MultiLevelViewerWindow(tk.Toplevel):
         ttk.Label(control_frame, text="股票:").pack(side=tk.LEFT, padx=(0, 5))
         self.code_var = tk.StringVar(value="sz.002639  雪人股份")
         self.code_entry = StockSearchEntry(control_frame, textvariable=self.code_var, width=24)
-        self.code_entry.pack(side=tk.LEFT, padx=(0, 15))
+        self.code_entry.pack(side=tk.LEFT, padx=(0, 5))
+
+        # 历史记录下拉框
+        self.history_var = tk.StringVar(value="")
+        self.history_combo = ttk.Combobox(
+            control_frame, textvariable=self.history_var,
+            values=[], width=20, state="readonly"
+        )
+        self.history_combo.pack(side=tk.LEFT, padx=(0, 15))
+        self.history_combo.bind('<<ComboboxSelected>>', self.on_history_selected)
+        self._update_history_combo()  # 初始化历史记录列表
 
         # 级别组合选择
         ttk.Label(control_frame, text="级别组合:").pack(side=tk.LEFT, padx=(0, 5))
@@ -465,6 +476,17 @@ class MultiLevelViewerWindow(tk.Toplevel):
         elif ' ' in text:
             return text.split()[0]
         return text
+
+    def get_current_stock_name(self) -> str:
+        """获取当前股票名称"""
+        text = self.code_var.get().strip()
+        if '  ' in text:
+            parts = text.split('  ', 1)
+            return parts[1] if len(parts) > 1 else ""
+        elif ' ' in text:
+            parts = text.split(None, 1)
+            return parts[1] if len(parts) > 1 else ""
+        return ""
 
     def get_selected_levels(self) -> List[KL_TYPE]:
         """获取选择的级别组合"""
@@ -618,6 +640,10 @@ class MultiLevelViewerWindow(tk.Toplevel):
 
         level_names = [self.get_level_name(lv) for lv in self.current_levels]
         self.title(f'{code} [{" + ".join(level_names)}] - 多级别区间套分析器')
+
+        # 添加到历史记录
+        stock_name = self.get_current_stock_name()
+        self._add_to_history(code, stock_name)
 
         # 绘制图表
         self.plot_charts()
@@ -1161,6 +1187,32 @@ class MultiLevelViewerWindow(tk.Toplevel):
         if self.auto_refresh_var.get():
             self.start_analysis()
             self.auto_refresh_job = self.after(interval, lambda: self._schedule_refresh(interval))
+
+    def _update_history_combo(self):
+        """更新历史记录下拉框"""
+        history = get_stock_history()
+        display_list = history.get_display_list(limit=15)
+        if display_list:
+            self.history_combo['values'] = ['-- 历史记录 --'] + display_list
+            self.history_var.set('-- 历史记录 --')
+        else:
+            self.history_combo['values'] = ['-- 无历史记录 --']
+            self.history_var.set('-- 无历史记录 --')
+
+    def on_history_selected(self, event=None):
+        """历史记录选择事件"""
+        selected = self.history_var.get()
+        if selected and not selected.startswith('--'):
+            # 设置到股票输入框
+            self.code_var.set(selected)
+            # 自动开始分析
+            self.start_analysis()
+
+    def _add_to_history(self, code: str, name: str):
+        """添加股票到历史记录"""
+        history = get_stock_history()
+        history.add(code, name)
+        self._update_history_combo()
 
     def on_close(self):
         """窗口关闭"""

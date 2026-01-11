@@ -105,6 +105,7 @@ jobs:
             --hidden-import=tkinter.filedialog `
             --hidden-import=chan_viewer_tk `
             --hidden-import=chan_viewer_multilevel_tk `
+            --hidden-import=stock_history `
             --collect-submodules=akshare `
             --collect-submodules=baostock `
             --collect-data=akshare `

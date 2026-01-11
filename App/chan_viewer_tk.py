@@ -68,6 +68,7 @@ from matplotlib.figure import Figure
 from Chan import CChan
 from ChanConfig import CChanConfig
 from Common.CEnum import AUTYPE, DATA_SRC, KL_TYPE
+from stock_history import get_stock_history
 
 
 # K线周期映射（按指定顺序）
@@ -372,7 +373,17 @@ class ChanViewerWindow(tk.Toplevel):
             textvariable=self.code_var,
             width=24
         )
-        self.code_entry.pack(side=tk.LEFT, padx=(0, 10))
+        self.code_entry.pack(side=tk.LEFT, padx=(0, 5))
+
+        # 历史记录下拉框
+        self.history_var = tk.StringVar(value="")
+        self.history_combo = ttk.Combobox(
+            control_frame, textvariable=self.history_var,
+            values=[], width=20, state="readonly"
+        )
+        self.history_combo.pack(side=tk.LEFT, padx=(0, 10))
+        self.history_combo.bind('<<ComboboxSelected>>', self.on_history_selected)
+        self._update_history_combo()  # 初始化历史记录列表
 
         # K线周期
         ttk.Label(control_frame, text="周期:").pack(side=tk.LEFT, padx=(0, 5))
@@ -789,6 +800,9 @@ class ChanViewerWindow(tk.Toplevel):
         self.title(f'{display_name} - {kl_type_name}')
         self.stock_name_var.set(display_name)
 
+        # 添加到历史记录
+        self._add_to_history(code, self.current_stock_name)
+
         # 绑制图表
         self.plot_chart()
 
@@ -925,6 +939,32 @@ class ChanViewerWindow(tk.Toplevel):
             import subprocess
             script_path = Path(__file__).parent / "chan_viewer_multilevel_tk.py"
             subprocess.Popen([sys.executable, str(script_path)])
+
+    def _update_history_combo(self):
+        """更新历史记录下拉框"""
+        history = get_stock_history()
+        display_list = history.get_display_list(limit=15)
+        if display_list:
+            self.history_combo['values'] = ['-- 历史记录 --'] + display_list
+            self.history_var.set('-- 历史记录 --')
+        else:
+            self.history_combo['values'] = ['-- 无历史记录 --']
+            self.history_var.set('-- 无历史记录 --')
+
+    def on_history_selected(self, event=None):
+        """历史记录选择事件"""
+        selected = self.history_var.get()
+        if selected and not selected.startswith('--'):
+            # 设置到股票输入框
+            self.code_var.set(selected)
+            # 自动开始分析
+            self.start_analysis()
+
+    def _add_to_history(self, code: str, name: str):
+        """添加股票到历史记录"""
+        history = get_stock_history()
+        history.add(code, name)
+        self._update_history_combo()
 
     def on_close(self):
         """窗口关闭事件"""

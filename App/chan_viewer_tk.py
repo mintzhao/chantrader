@@ -158,6 +158,7 @@ class StockSearchEntry(ttk.Frame):
     全量A股股票搜索输入框
     - 简单的输入框 + 搜索结果列表
     - 支持代码、名称模糊搜索（支持中文）
+    - WSL环境下可通过粘贴输入中文
     """
     def __init__(self, master, textvariable=None, width=25, **kwargs):
         super().__init__(master, **kwargs)
@@ -179,7 +180,7 @@ class StockSearchEntry(ttk.Frame):
         self.popup = None
         self.listbox = None
 
-        # 使用 trace 监听文本变化（支持中文输入法）
+        # 使用 trace 监听文本变化（支持中文输入法和粘贴）
         self.text_var.trace_add('write', self._on_text_changed)
 
         # 绑定键盘事件（用于导航）
@@ -187,8 +188,30 @@ class StockSearchEntry(ttk.Frame):
         self.entry.bind('<Escape>', self.hide_popup)
         self.entry.bind('<Down>', self.focus_listbox)
 
+        # 支持右键粘贴菜单
+        self.entry.bind('<Button-3>', self._show_paste_menu)
+
         # 直接加载股票列表（读本地文件很快）
         self.stock_list = load_stock_list()
+
+    def _show_paste_menu(self, event):
+        """显示右键粘贴菜单"""
+        menu = tk.Menu(self, tearoff=0)
+        menu.add_command(label="粘贴", command=self._paste_from_clipboard)
+        menu.add_command(label="清空", command=lambda: self.text_var.set(""))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _paste_from_clipboard(self):
+        """从剪贴板粘贴"""
+        try:
+            text = self.clipboard_get()
+            # 插入到当前光标位置
+            self.entry.insert(tk.INSERT, text)
+        except tk.TclError:
+            pass  # 剪贴板为空
 
     def _on_text_changed(self, *args):
         """文本变化时触发搜索（带防抖动）"""

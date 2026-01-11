@@ -107,6 +107,8 @@ jobs:
             --hidden-import=chan_viewer_multilevel_tk `
             --collect-submodules=akshare `
             --collect-submodules=baostock `
+            --collect-data=akshare `
+            --collect-data=baostock `
             --paths=. `
             --paths=App `
             App/chan_app.py

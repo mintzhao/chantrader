@@ -1,0 +1,43 @@
+# Chan.py Web - Docker Compose
+
+version: '3.8'
+
+services:
+  # 后端服务
+  backend:
+    build:
+      context: ..
+      dockerfile: web/Dockerfile.backend
+    container_name: chanpy-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./data:/app/backend/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # 前端服务
+  frontend:
+    build:
+      context: ..
+      dockerfile: web/Dockerfile.frontend
+    container_name: chanpy-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  data:

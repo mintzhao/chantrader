@@ -51,7 +51,7 @@ class ChanApp(tk.Tk):
         super().__init__()
 
         self.title("缠论分析器")
-        self.geometry("400x300")
+        self.geometry("400x380")
         self.resizable(False, False)
 
         # 窗口居中
@@ -65,6 +65,7 @@ class ChanApp(tk.Tk):
         # 跟踪打开的窗口
         self.single_level_windows = []
         self.multi_level_windows = []
+        self.scanner_windows = []
 
         self.init_ui()
 
@@ -132,6 +133,22 @@ class ChanApp(tk.Tk):
             foreground="gray"
         ).pack()
 
+        # 买点扫描器按钮
+        scanner_btn = ttk.Button(
+            button_frame,
+            text="A股买点扫描",
+            command=self.open_bsp_scanner,
+            width=25
+        )
+        scanner_btn.pack(pady=(20, 10))
+
+        ttk.Label(
+            button_frame,
+            text="批量扫描A股，自动发现近期买点股票",
+            font=("Arial", 9),
+            foreground="gray"
+        ).pack()
+
         # 状态栏
         status_frame = ttk.Frame(self)
         status_frame.pack(fill=tk.X, side=tk.BOTTOM)
@@ -195,6 +212,25 @@ class ChanApp(tk.Tk):
             import traceback
             traceback.print_exc()
 
+    def open_bsp_scanner(self):
+        """打开买点扫描器窗口"""
+        try:
+            from ashare_bsp_scanner_tk import BspScannerWindow
+
+            # 创建窗口，父窗口设为 self
+            window = BspScannerWindow(self)
+
+            # 修改窗口关闭行为
+            window.protocol("WM_DELETE_WINDOW", lambda w=window: self._on_child_close(w, self.scanner_windows))
+
+            self.scanner_windows.append(window)
+            self.status_var.set(f"已打开买点扫描器窗口 (共 {len(self.scanner_windows)} 个)")
+
+        except Exception as e:
+            self.status_var.set(f"打开失败: {e}")
+            import traceback
+            traceback.print_exc()
+
     def _on_child_close(self, window, window_list):
         """处理子窗口关闭"""
         # 调用窗口自身的关闭逻辑（清理资源）
@@ -227,7 +263,7 @@ class ChanApp(tk.Tk):
         window.destroy()
 
         # 更新状态
-        total = len(self.single_level_windows) + len(self.multi_level_windows)
+        total = len(self.single_level_windows) + len(self.multi_level_windows) + len(self.scanner_windows)
         if total > 0:
             self.status_var.set(f"当前打开 {total} 个分析窗口")
         else:
@@ -240,6 +276,8 @@ class ChanApp(tk.Tk):
             self._on_child_close(window, self.single_level_windows)
         for window in self.multi_level_windows[:]:
             self._on_child_close(window, self.multi_level_windows)
+        for window in self.scanner_windows[:]:
+            self._on_child_close(window, self.scanner_windows)
 
         # 退出程序
         self.quit()

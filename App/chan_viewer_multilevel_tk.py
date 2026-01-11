@@ -138,7 +138,15 @@ def load_stock_list() -> List[tuple]:
     if _stock_list_cache:
         return _stock_list_cache
 
-    csv_path = Path(__file__).parent / "stock_list.csv"
+    # 处理 PyInstaller 打包后的路径
+    if getattr(sys, 'frozen', False):
+        # PyInstaller 打包后，从 _MEIPASS 目录读取
+        base_path = Path(sys._MEIPASS) / 'App'
+    else:
+        # 普通 Python 运行
+        base_path = Path(__file__).parent
+
+    csv_path = base_path / "stock_list.csv"
     if csv_path.exists():
         try:
             import csv

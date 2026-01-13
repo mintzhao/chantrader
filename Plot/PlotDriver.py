@@ -591,7 +591,7 @@ class CPlotDriver:
         self.y_min = min([self.y_min, min(down)])
         self.y_max = max([self.y_max, max(up)])
 
-    def bsp_common_draw(self, bsp_list, ax: Axes, buy_color, sell_color, fontsize, arrow_l, arrow_h, arrow_w):
+    def bsp_common_draw(self, bsp_list, ax: Axes, buy_color, sell_color, fontsize, arrow_l, arrow_h, arrow_w, show_price=True):
         x_begin = ax.get_xlim()[0]
         y_range = self.y_max-self.y_min
         for bsp in bsp_list:
@@ -605,7 +605,7 @@ class CPlotDriver:
             arrow_head = arrow_len*arrow_h
             ax.text(bsp.x,
                     bsp.y-arrow_len*arrow_dir,
-                    f'{bsp.desc()}',
+                    f'{bsp.desc(show_price=show_price)}',
                     fontsize=fontsize,
                     color=color,
                     verticalalignment=verticalalignment,
@@ -622,7 +622,7 @@ class CPlotDriver:
             if bsp.y-arrow_len*arrow_dir > self.y_max:
                 self.y_max = bsp.y-arrow_len*arrow_dir
 
-    def draw_bs_point(self, meta: CChanPlotMeta, ax: Axes, buy_color='r', sell_color='g', fontsize=15, arrow_l=0.15, arrow_h=0.2, arrow_w=1):
+    def draw_bs_point(self, meta: CChanPlotMeta, ax: Axes, buy_color='r', sell_color='g', fontsize=15, arrow_l=0.15, arrow_h=0.2, arrow_w=1, show_price=True):
         self.bsp_common_draw(
             bsp_list=meta.bs_point_lst,
             ax=ax,
@@ -632,9 +632,10 @@ class CPlotDriver:
             arrow_l=arrow_l,
             arrow_h=arrow_h,
             arrow_w=arrow_w,
+            show_price=show_price,
         )
 
-    def draw_seg_bs_point(self, meta: CChanPlotMeta, ax: Axes, buy_color='r', sell_color='g', fontsize=18, arrow_l=0.2, arrow_h=0.25, arrow_w=1.2):
+    def draw_seg_bs_point(self, meta: CChanPlotMeta, ax: Axes, buy_color='r', sell_color='g', fontsize=18, arrow_l=0.2, arrow_h=0.25, arrow_w=1.2, show_price=True):
         self.bsp_common_draw(
             bsp_list=meta.seg_bsp_lst,
             ax=ax,
@@ -644,6 +645,7 @@ class CPlotDriver:
             arrow_l=arrow_l,
             arrow_h=arrow_h,
             arrow_w=arrow_w,
+            show_price=show_price,
         )
 
     def update_y_range(self, text_box, text_y):

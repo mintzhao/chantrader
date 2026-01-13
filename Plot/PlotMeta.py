@@ -110,9 +110,30 @@ class CBS_Point_meta:
         self.x = bsp.klu.idx
         self.y = bsp.klu.low if self.is_buy else bsp.klu.high
 
-    def desc(self):
+    def desc(self, show_price: bool = True):
+        """
+        获取买卖点描述
+
+        Args:
+            show_price: 是否显示价格，默认True
+
+        Returns:
+            格式如 "b1(25.98)" 或 "s3a(34.59)"，线段买卖点带※前缀
+        """
         is_seg_flag = "※" if self.is_seg else ""
-        return f'{is_seg_flag}b{self.type}' if self.is_buy else f'{is_seg_flag}s{self.type}'
+        bsp_type = f'b{self.type}' if self.is_buy else f's{self.type}'
+
+        if show_price:
+            # 根据价格大小自动选择小数位数
+            if self.y >= 100:
+                price_str = f"{self.y:.1f}"
+            elif self.y >= 10:
+                price_str = f"{self.y:.2f}"
+            else:
+                price_str = f"{self.y:.3f}"
+            return f'{is_seg_flag}{bsp_type}({price_str})'
+        else:
+            return f'{is_seg_flag}{bsp_type}'
 
 
 class CChanPlotMeta:

@@ -116,21 +116,23 @@ class CAkshare(CCommonStockApi):
         # 获取数据
         if is_minute:
             # 分钟K线数据 - 使用 stock_zh_a_hist_min_em
-            # 注意：分钟数据只能获取最近5天的数据
+            # 注意：分钟数据最多获取最近5个交易日的数据
+            # 将日期格式从 "20250110" 转换为 "2025-01-10 09:30:00" 格式
+            start_datetime = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:]} 09:30:00"
+            end_datetime = f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:]} 15:00:00"
+
             df = ak.stock_zh_a_hist_min_em(
                 symbol=code_num,
                 period=period,
-                adjust=adjust
+                adjust=adjust,
+                start_date=start_datetime,
+                end_date=end_datetime
             )
             # 分钟数据的列名与日线不同，需要重命名
             if not df.empty:
                 # akshare分钟数据列: ['时间', '开盘', '收盘', '最高', '最低', '成交量', '成交额', '最新价']
                 # 按时间排序
                 df = df.sort_values('时间')
-                # 筛选日期范围（分钟数据的时间格式是 "2025-01-10 09:31:00"）
-                df['日期字符串'] = df['时间'].astype(str).str[:10].str.replace('-', '')
-                df = df[(df['日期字符串'] >= start_date) & (df['日期字符串'] <= end_date)]
-                df = df.drop(columns=['日期字符串'])
 
                 # 过滤无效数据：开盘价为0的数据是无效的
                 # AkShare 分钟数据可能返回开盘=0的异常行

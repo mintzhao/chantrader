@@ -186,7 +186,8 @@ def get_tradable_stocks(include_main: bool = True,
                         include_star: bool = False,
                         include_bse: bool = False,
                         min_price: float = 0,
-                        max_price: float = float('inf')) -> pd.DataFrame:
+                        max_price: float = float('inf'),
+                        max_retries: int = 3) -> pd.DataFrame:
     """
     获取可交易的A股股票列表
 
@@ -197,64 +198,80 @@ def get_tradable_stocks(include_main: bool = True,
         include_bse: 包含北交所 (8/43开头)
         min_price: 最低价格
         max_price: 最高价格
+        max_retries: 最大重试次数
 
     Returns:
         pd.DataFrame: 包含 ['代码', '名称', '最新价', '涨跌幅'] 列的股票列表
     """
-    try:
-        # 获取A股实时行情
-        df = ak.stock_zh_a_spot_em()
+    import time
 
-        # 1. 剔除ST股票（名称包含ST）
-        df = df[~df['名称'].str.contains('ST', case=False, na=False)]
+    for attempt in range(max_retries):
+        try:
+            # 获取A股实时行情（增加超时重试）
+            print(f"正在获取股票列表... (尝试 {attempt + 1}/{max_retries})")
+            df = ak.stock_zh_a_spot_em()
 
-        # 2. 剔除B股（200开头深圳B股，900开头上海B股）
-        df = df[~df['代码'].str.startswith('200')]
-        df = df[~df['代码'].str.startswith('900')]
+            # 1. 剔除ST股票（名称包含ST）
+            df = df[~df['名称'].str.contains('ST', case=False, na=False)]
 
-        # 3. 剔除存托凭证CDR（920开头）
-        df = df[~df['代码'].str.startswith('920')]
+            # 2. 剔除B股（200开头深圳B股，900开头上海B股）
+            df = df[~df['代码'].str.startswith('200')]
+            df = df[~df['代码'].str.startswith('900')]
 
-        # 4. 剔除停牌股票（成交量为0）
-        df = df[df['成交量'] > 0]
+            # 3. 剔除存托凭证CDR（920开头）
+            df = df[~df['代码'].str.startswith('920')]
 
-        # 5. 剔除异常股票（最新价<=0）
-        df = df[df['最新价'] > 0]
+            # 4. 剔除停牌股票（成交量为0）
+            df = df[df['成交量'] > 0]
 
-        # 6. 根据配置过滤板块
-        conditions = []
+            # 5. 剔除异常股票（最新价<=0）
+            df = df[df['最新价'] > 0]
 
-        if include_main:
-            # 主板：沪市60开头，深市00开头（排除创业板300）
-            conditions.append(df['代码'].str.startswith('60'))
-            conditions.append(df['代码'].str.startswith('00') & ~df['代码'].str.startswith('003'))
+            # 6. 根据配置过滤板块
+            conditions = []
 
-        if include_gem:
-            # 创业板：300开头
-            conditions.append(df['代码'].str.startswith('300') | df['代码'].str.startswith('301'))
+            if include_main:
+                # 主板：沪市60开头，深市00开头（排除创业板300）
+                conditions.append(df['代码'].str.startswith('60'))
+                conditions.append(df['代码'].str.startswith('00') & ~df['代码'].str.startswith('003'))
 
-        if include_star:
-            # 科创板：688开头
-            conditions.append(df['代码'].str.startswith('688'))
+            if include_gem:
+                # 创业板：300开头
+                conditions.append(df['代码'].str.startswith('300') | df['代码'].str.startswith('301'))
 
-        if include_bse:
-            # 北交所：8开头、43开头
-            conditions.append(df['代码'].str.startswith('8'))
-            conditions.append(df['代码'].str.startswith('43'))
+            if include_star:
+                # 科创板：688开头
+                conditions.append(df['代码'].str.startswith('688'))
 
-        if conditions:
-            combined_condition = conditions[0]
-            for cond in conditions[1:]:
-                combined_condition = combined_condition | cond
-            df = df[combined_condition]
+            if include_bse:
+                # 北交所：8开头、43开头
+                conditions.append(df['代码'].str.startswith('8'))
+                conditions.append(df['代码'].str.startswith('43'))
 
-        # 7. 价格区间过滤
-        df = df[(df['最新价'] >= min_price) & (df['最新价'] <= max_price)]
+            if conditions:
+                combined_condition = conditions[0]
+                for cond in conditions[1:]:
+                    combined_condition = combined_condition | cond
+                df = df[combined_condition]
 
-        return df[['代码', '名称', '最新价', '涨跌幅']].reset_index(drop=True)
-    except Exception as e:
-        print(f"获取股票列表失败: {e}")
-        return pd.DataFrame()
+            # 7. 价格区间过滤
+            df = df[(df['最新价'] >= min_price) & (df['最新价'] <= max_price)]
+
+            print(f"成功获取 {len(df)} 只股票")
+            return df[['代码', '名称', '最新价', '涨跌幅']].reset_index(drop=True)
+
+        except Exception as e:
+            error_msg = str(e)
+            print(f"获取股票列表失败 (尝试 {attempt + 1}/{max_retries}): {error_msg}")
+
+            if attempt < max_retries - 1:
+                # 网络超时，等待后重试
+                wait_time = (attempt + 1) * 5  # 递增等待时间：5秒、10秒、15秒
+                print(f"等待 {wait_time} 秒后重试...")
+                time.sleep(wait_time)
+            else:
+                print("已达到最大重试次数，获取股票列表失败")
+                return pd.DataFrame()
 
 
 def get_bsp_risk_rating(bsp_type: str) -> int:
@@ -471,6 +488,7 @@ class BspScannerWindow(tk.Toplevel):
         btn_frame = ttk.Frame(list_frame)
         btn_frame.pack(fill=tk.X, pady=(5, 0))
         ttk.Button(btn_frame, text="导出TXT", command=self.export_to_txt).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="导入回测", command=self.import_and_backtest).pack(side=tk.LEFT, padx=(5, 0))
         ttk.Button(btn_frame, text="清空列表", command=self.clear_stock_list).pack(side=tk.LEFT, padx=(5, 0))
 
         # 日志区域
@@ -660,6 +678,371 @@ class BspScannerWindow(tk.Toplevel):
 
             self.status_var.set(f'已导出到: {filename}')
             messagebox.showinfo("导出成功", f"已导出 {len(self.stock_data)} 只股票到:\n{filename}")
+
+        except Exception as e:
+            messagebox.showerror("导出失败", str(e))
+
+    def import_and_backtest(self):
+        """导入TXT文件并进行策略回测"""
+        filename = filedialog.askopenfilename(
+            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
+            title="选择要回测的买点股票文件"
+        )
+
+        if not filename:
+            return
+
+        try:
+            # 解析TXT文件
+            stocks = self._parse_backtest_file(filename)
+            if not stocks:
+                messagebox.showwarning("警告", "未能从文件中解析出有效的股票数据")
+                return
+
+            # 显示回测窗口
+            self._show_backtest_window(stocks, filename)
+
+        except Exception as e:
+            messagebox.showerror("导入失败", str(e))
+
+    def _parse_backtest_file(self, filename: str) -> List[Dict]:
+        """
+        解析导出的TXT文件
+
+        Returns:
+            List[Dict]: [{'code': '000001', 'name': '平安银行', 'rec_price': 10.5, 'rec_date': '2024-01-01'}, ...]
+        """
+        stocks = []
+        rec_date = None
+
+        with open(filename, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        in_data_section = False
+        for line in lines:
+            line = line.strip()
+
+            # 解析推荐日期（从标题行提取）
+            if "A股买点扫描结果" in line and "-" in line:
+                # 格式: A股买点扫描结果 - 2024-01-01 10:30:00
+                try:
+                    date_part = line.split("-", 1)[1].strip()
+                    # 提取日期部分 (YYYY-MM-DD)
+                    rec_date = date_part.split()[0]
+                except:
+                    pass
+
+            # 检测数据开始（表头后的分隔线）
+            if line.startswith("-" * 10) and not in_data_section:
+                in_data_section = True
+                continue
+
+            # 检测数据结束
+            if in_data_section and (line.startswith("-" * 10) or line.startswith("共 ")):
+                break
+
+            # 解析数据行
+            if in_data_section and line:
+                parts = line.split()
+                if len(parts) >= 3:
+                    try:
+                        code = parts[0]
+                        # 验证是否为有效股票代码（6位数字）
+                        if len(code) == 6 and code.isdigit():
+                            name = parts[1]
+                            # 价格可能在第3列
+                            price_str = parts[2]
+                            try:
+                                price = float(price_str)
+                            except ValueError:
+                                continue
+
+                            stocks.append({
+                                'code': code,
+                                'name': name,
+                                'rec_price': price,
+                                'rec_date': rec_date or '未知'
+                            })
+                    except:
+                        continue
+
+        return stocks
+
+    def _show_backtest_window(self, stocks: List[Dict], filename: str):
+        """显示回测结果窗口"""
+        # 创建回测窗口
+        backtest_win = tk.Toplevel(self)
+        backtest_win.title("策略回测结果")
+        backtest_win.geometry("900x600")
+        backtest_win.minsize(800, 500)
+
+        # 主框架
+        main_frame = ttk.Frame(backtest_win, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # 信息标签
+        info_frame = ttk.Frame(main_frame)
+        info_frame.pack(fill=tk.X, pady=(0, 10))
+
+        rec_date = stocks[0]['rec_date'] if stocks else '未知'
+        ttk.Label(info_frame, text=f"推荐日期: {rec_date}", font=("Arial", 10, "bold")).pack(side=tk.LEFT)
+        ttk.Label(info_frame, text=f"  |  股票数量: {len(stocks)}只", font=("Arial", 10)).pack(side=tk.LEFT)
+
+        self.backtest_status_var = tk.StringVar(value="正在获取最新价格...")
+        ttk.Label(info_frame, textvariable=self.backtest_status_var, foreground="blue").pack(side=tk.RIGHT)
+
+        # 统计信息框
+        stats_frame = ttk.LabelFrame(main_frame, text="策略统计", padding="10")
+        stats_frame.pack(fill=tk.X, pady=(0, 10))
+
+        # 统计标签（初始为空，后续更新）
+        self.stats_labels = {}
+        stats_items = [
+            ("avg_return", "平均收益:"),
+            ("win_rate", "胜率:"),
+            ("max_gain", "最大涨幅:"),
+            ("max_loss", "最大跌幅:"),
+            ("winners", "盈利股票:"),
+            ("losers", "亏损股票:"),
+        ]
+
+        for i, (key, label_text) in enumerate(stats_items):
+            row = i // 3
+            col = (i % 3) * 2
+
+            ttk.Label(stats_frame, text=label_text).grid(row=row, column=col, sticky="e", padx=(10, 5))
+            self.stats_labels[key] = ttk.Label(stats_frame, text="计算中...", font=("Consolas", 10, "bold"))
+            self.stats_labels[key].grid(row=row, column=col + 1, sticky="w", padx=(0, 20))
+
+        # 结果表格
+        tree_frame = ttk.Frame(main_frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+
+        columns = ('code', 'name', 'rec_price', 'cur_price', 'change', 'change_pct')
+        self.backtest_tree = ttk.Treeview(tree_frame, columns=columns, show='headings', height=15)
+
+        self.backtest_tree.heading('code', text='代码')
+        self.backtest_tree.heading('name', text='名称')
+        self.backtest_tree.heading('rec_price', text='推荐价')
+        self.backtest_tree.heading('cur_price', text='当前价')
+        self.backtest_tree.heading('change', text='涨跌额')
+        self.backtest_tree.heading('change_pct', text='涨跌幅%')
+
+        self.backtest_tree.column('code', width=80, anchor='center')
+        self.backtest_tree.column('name', width=100, anchor='center')
+        self.backtest_tree.column('rec_price', width=80, anchor='e')
+        self.backtest_tree.column('cur_price', width=80, anchor='e')
+        self.backtest_tree.column('change', width=80, anchor='e')
+        self.backtest_tree.column('change_pct', width=100, anchor='e')
+
+        tree_scroll = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self.backtest_tree.yview)
+        self.backtest_tree.configure(yscrollcommand=tree_scroll.set)
+
+        self.backtest_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # 配置标签样式
+        self.backtest_tree.tag_configure('gain', foreground='red')
+        self.backtest_tree.tag_configure('loss', foreground='green')
+        self.backtest_tree.tag_configure('flat', foreground='gray')
+
+        # 底部按钮
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill=tk.X, pady=(10, 0))
+
+        ttk.Button(btn_frame, text="导出回测报告", command=lambda: self._export_backtest_report(stocks, filename)).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text="关闭", command=backtest_win.destroy).pack(side=tk.RIGHT)
+
+        # 保存窗口和数据引用
+        self.backtest_win = backtest_win
+        self.backtest_stocks = stocks
+
+        # 在后台线程获取当前价格
+        threading.Thread(target=self._fetch_current_prices, args=(stocks,), daemon=True).start()
+
+    def _fetch_current_prices(self, stocks: List[Dict]):
+        """后台获取股票当前价格"""
+        try:
+            # 获取实时行情
+            df = ak.stock_zh_a_spot_em()
+
+            results = []
+            for stock in stocks:
+                code = stock['code']
+                name = stock['name']
+                rec_price = stock['rec_price']
+
+                # 查找当前价格
+                match = df[df['代码'] == code]
+                if not match.empty:
+                    cur_price = float(match.iloc[0]['最新价'])
+                    change = cur_price - rec_price
+                    change_pct = (change / rec_price) * 100 if rec_price > 0 else 0
+
+                    results.append({
+                        'code': code,
+                        'name': name,
+                        'rec_price': rec_price,
+                        'cur_price': cur_price,
+                        'change': change,
+                        'change_pct': change_pct
+                    })
+                else:
+                    # 找不到数据，标记为无效
+                    results.append({
+                        'code': code,
+                        'name': name,
+                        'rec_price': rec_price,
+                        'cur_price': None,
+                        'change': None,
+                        'change_pct': None
+                    })
+
+            # 在主线程更新UI
+            self.after(0, lambda: self._update_backtest_results(results))
+
+        except Exception as e:
+            self.after(0, lambda: self._on_backtest_error(str(e)))
+
+    def _update_backtest_results(self, results: List[Dict]):
+        """更新回测结果到UI"""
+        if not hasattr(self, 'backtest_tree') or not self.backtest_tree.winfo_exists():
+            return
+
+        # 清空表格
+        for item in self.backtest_tree.get_children():
+            self.backtest_tree.delete(item)
+
+        # 统计数据
+        valid_results = [r for r in results if r['cur_price'] is not None]
+        winners = [r for r in valid_results if r['change_pct'] > 0]
+        losers = [r for r in valid_results if r['change_pct'] < 0]
+        flat = [r for r in valid_results if r['change_pct'] == 0]
+
+        # 按涨跌幅排序（从高到低）
+        results.sort(key=lambda x: x['change_pct'] if x['change_pct'] is not None else -999, reverse=True)
+
+        # 填充表格
+        for r in results:
+            if r['cur_price'] is None:
+                values = (r['code'], r['name'], f"{r['rec_price']:.2f}", "无数据", "-", "-")
+                tag = 'flat'
+            else:
+                change_pct = r['change_pct']
+                if change_pct > 0:
+                    tag = 'gain'
+                elif change_pct < 0:
+                    tag = 'loss'
+                else:
+                    tag = 'flat'
+
+                values = (
+                    r['code'],
+                    r['name'],
+                    f"{r['rec_price']:.2f}",
+                    f"{r['cur_price']:.2f}",
+                    f"{r['change']:+.2f}",
+                    f"{r['change_pct']:+.2f}%"
+                )
+
+            self.backtest_tree.insert('', tk.END, values=values, tags=(tag,))
+
+        # 计算统计数据
+        if valid_results:
+            avg_return = sum(r['change_pct'] for r in valid_results) / len(valid_results)
+            win_rate = len(winners) / len(valid_results) * 100
+            max_gain = max(r['change_pct'] for r in valid_results)
+            max_loss = min(r['change_pct'] for r in valid_results)
+
+            # 更新统计标签
+            avg_color = "red" if avg_return > 0 else ("green" if avg_return < 0 else "black")
+            self.stats_labels['avg_return'].config(text=f"{avg_return:+.2f}%", foreground=avg_color)
+            self.stats_labels['win_rate'].config(text=f"{win_rate:.1f}%")
+            self.stats_labels['max_gain'].config(text=f"{max_gain:+.2f}%", foreground="red")
+            self.stats_labels['max_loss'].config(text=f"{max_loss:+.2f}%", foreground="green")
+            self.stats_labels['winners'].config(text=f"{len(winners)}只", foreground="red")
+            self.stats_labels['losers'].config(text=f"{len(losers)}只", foreground="green")
+
+        self.backtest_status_var.set(f"回测完成 - 有效数据{len(valid_results)}只")
+        self.backtest_results = results  # 保存结果用于导出
+
+    def _on_backtest_error(self, error_msg: str):
+        """回测出错"""
+        if hasattr(self, 'backtest_status_var'):
+            self.backtest_status_var.set(f"获取数据失败: {error_msg}")
+
+    def _export_backtest_report(self, stocks: List[Dict], original_filename: str):
+        """导出回测报告"""
+        if not hasattr(self, 'backtest_results'):
+            messagebox.showwarning("警告", "请等待回测完成")
+            return
+
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")],
+            initialfile=f"回测报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        )
+
+        if not filename:
+            return
+
+        try:
+            results = self.backtest_results
+            valid_results = [r for r in results if r['cur_price'] is not None]
+            winners = [r for r in valid_results if r['change_pct'] > 0]
+            losers = [r for r in valid_results if r['change_pct'] < 0]
+
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write("=" * 80 + "\n")
+                f.write(f"策略回测报告 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write("=" * 80 + "\n\n")
+
+                # 原始文件信息
+                rec_date = stocks[0]['rec_date'] if stocks else '未知'
+                f.write(f"原始推荐文件: {original_filename}\n")
+                f.write(f"推荐日期: {rec_date}\n")
+                f.write(f"回测日期: {datetime.now().strftime('%Y-%m-%d')}\n\n")
+
+                # 统计摘要
+                f.write("-" * 80 + "\n")
+                f.write("【策略统计摘要】\n")
+                f.write("-" * 80 + "\n")
+
+                if valid_results:
+                    avg_return = sum(r['change_pct'] for r in valid_results) / len(valid_results)
+                    win_rate = len(winners) / len(valid_results) * 100
+                    max_gain = max(r['change_pct'] for r in valid_results)
+                    max_loss = min(r['change_pct'] for r in valid_results)
+
+                    f.write(f"  股票总数: {len(stocks)}只\n")
+                    f.write(f"  有效数据: {len(valid_results)}只\n")
+                    f.write(f"  平均收益: {avg_return:+.2f}%\n")
+                    f.write(f"  胜率:     {win_rate:.1f}%\n")
+                    f.write(f"  盈利股票: {len(winners)}只\n")
+                    f.write(f"  亏损股票: {len(losers)}只\n")
+                    f.write(f"  最大涨幅: {max_gain:+.2f}%\n")
+                    f.write(f"  最大跌幅: {max_loss:+.2f}%\n")
+
+                f.write("\n")
+                f.write("-" * 80 + "\n")
+                f.write("【详细数据】\n")
+                f.write("-" * 80 + "\n")
+                f.write(f"{'代码':<10}{'名称':<12}{'推荐价':<10}{'当前价':<10}{'涨跌额':<10}{'涨跌幅':<10}\n")
+                f.write("-" * 80 + "\n")
+
+                # 按涨跌幅排序
+                results.sort(key=lambda x: x['change_pct'] if x['change_pct'] is not None else -999, reverse=True)
+
+                for r in results:
+                    if r['cur_price'] is None:
+                        f.write(f"{r['code']:<10}{r['name']:<12}{r['rec_price']:<10.2f}{'无数据':<10}{'-':<10}{'-':<10}\n")
+                    else:
+                        f.write(f"{r['code']:<10}{r['name']:<12}{r['rec_price']:<10.2f}{r['cur_price']:<10.2f}{r['change']:+.2f}".ljust(60) + f"{r['change_pct']:+.2f}%\n")
+
+                f.write("\n" + "=" * 80 + "\n")
+                f.write("注: 正值表示盈利，负值表示亏损\n")
+
+            messagebox.showinfo("导出成功", f"回测报告已导出到:\n{filename}")
 
         except Exception as e:
             messagebox.showerror("导出失败", str(e))

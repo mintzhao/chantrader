@@ -27,6 +27,7 @@ A股买点扫描器 - Powered by chan.py (tkinter版本)
     python App/ashare_bsp_scanner_tk.py
 """
 import sys
+import gc
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Tuple
@@ -45,6 +46,30 @@ def _setup_path():
     if base_path not in sys.path:
         sys.path.insert(0, base_path)
 _setup_path()
+
+# 抑制后台线程中 tkinter 对象析构时的 RuntimeError
+# 这是 tkinter 与多线程配合使用时的已知问题
+# 当后台线程中的 tkinter Variable/Image 对象被垃圾回收时会触发此错误
+def _setup_exception_hooks():
+    """设置异常钩子以静默处理 tkinter 多线程析构错误"""
+    # 处理普通异常
+    _original_excepthook = sys.excepthook
+    def _silent_excepthook(exc_type, exc_value, exc_tb):
+        if exc_type is RuntimeError and "main thread is not in main loop" in str(exc_value):
+            return
+        _original_excepthook(exc_type, exc_value, exc_tb)
+    sys.excepthook = _silent_excepthook
+
+    # 处理 __del__ 中的异常 (Python 3.8+)
+    if hasattr(sys, 'unraisablehook'):
+        _original_unraisablehook = sys.unraisablehook
+        def _silent_unraisablehook(unraisable):
+            if unraisable.exc_type is RuntimeError and "main thread is not in main loop" in str(unraisable.exc_value):
+                return
+            _original_unraisablehook(unraisable)
+        sys.unraisablehook = _silent_unraisablehook
+
+_setup_exception_hooks()
 
 import matplotlib
 matplotlib.use('TkAgg')
@@ -109,7 +134,17 @@ FILTER_LOGIC_DOC = """
   • 最低价: 5元 （过滤低价股）
   • 最高价: 100元（过滤高价股）
 
-【第三层：技术分析】
+【第三层：总市值过滤】
+━━━━━━━━━━━━━━━━━━━━━━
+可配置总市值范围（单位：亿元），例如：
+  • 最低市值: 20亿  （过滤小市值股）
+  • 最高市值: 200亿 （过滤超大市值股）
+
+默认筛选20-200亿市值的中盘股，兼顾：
+  • 流动性：市值过小流动性差
+  • 成长性：市值过大弹性不足
+
+【第四层：技术分析】
 ━━━━━━━━━━━━━━━━━━
 使用chan.py进行技术分析计算：
 
@@ -123,7 +158,7 @@ FILTER_LOGIC_DOC = """
   ├─ 中枢 (ZS)    - 走势的震荡区间
   └─ 买卖点 (BSP) - 基于背驰的交易信号
 
-【第四层：买点筛选】
+【第五层：买点筛选】
 ━━━━━━━━━━━━━━━━━━
 从技术分析结果中筛选有效买点：
 
@@ -167,6 +202,7 @@ FILTER_LOGIC_DOC = """
   • K线数据:   获取往前N天的历史K线
   • 笔严格模式: 开启后对笔的划分更严格
   • 价格区间:  过滤指定价格范围的股票
+  • 市值区间:  过滤指定总市值范围的股票（单位：亿元）
 
 【设计思想】
 ━━━━━━━━━━━━
@@ -187,6 +223,8 @@ def get_tradable_stocks(include_main: bool = True,
                         include_bse: bool = False,
                         min_price: float = 0,
                         max_price: float = float('inf'),
+                        min_market_cap: float = 0,
+                        max_market_cap: float = float('inf'),
                         max_retries: int = 3) -> pd.DataFrame:
     """
     获取可交易的A股股票列表
@@ -198,10 +236,12 @@ def get_tradable_stocks(include_main: bool = True,
         include_bse: 包含北交所 (8/43开头)
         min_price: 最低价格
         max_price: 最高价格
+        min_market_cap: 最低总市值（亿元）
+        max_market_cap: 最高总市值（亿元）
         max_retries: 最大重试次数
 
     Returns:
-        pd.DataFrame: 包含 ['代码', '名称', '最新价', '涨跌幅'] 列的股票列表
+        pd.DataFrame: 包含 ['代码', '名称', '最新价', '涨跌幅', '总市值'] 列的股票列表
     """
     import time
 
@@ -257,8 +297,16 @@ def get_tradable_stocks(include_main: bool = True,
             # 7. 价格区间过滤
             df = df[(df['最新价'] >= min_price) & (df['最新价'] <= max_price)]
 
+            # 8. 总市值过滤（单位：亿元，原始数据单位为元）
+            if '总市值' in df.columns:
+                # 将总市值从元转换为亿元进行比较
+                df['总市值_亿'] = df['总市值'] / 1e8
+                df = df[(df['总市值_亿'] >= min_market_cap) & (df['总市值_亿'] <= max_market_cap)]
+            else:
+                df['总市值_亿'] = 0
+
             print(f"成功获取 {len(df)} 只股票")
-            return df[['代码', '名称', '最新价', '涨跌幅']].reset_index(drop=True)
+            return df[['代码', '名称', '最新价', '涨跌幅', '总市值_亿']].rename(columns={'总市值_亿': '总市值'}).reset_index(drop=True)
 
         except Exception as e:
             error_msg = str(e)
@@ -381,7 +429,7 @@ class BspScannerWindow(tk.Toplevel):
                    textvariable=self.bsp_days_var, width=4).pack(side=tk.LEFT, padx=(0, 8))
 
         ttk.Label(filter_group, text="K线数据:").pack(side=tk.LEFT, padx=(0, 2))
-        self.history_days_var = tk.IntVar(value=365)
+        self.history_days_var = tk.IntVar(value=100)
         ttk.Spinbox(filter_group, from_=60, to=730,
                    textvariable=self.history_days_var, width=4).pack(side=tk.LEFT, padx=(0, 3))
         ttk.Label(filter_group, text="天").pack(side=tk.LEFT, padx=(0, 8))
@@ -401,9 +449,23 @@ class BspScannerWindow(tk.Toplevel):
                    textvariable=self.min_price_var, width=5).pack(side=tk.LEFT, padx=(0, 5))
 
         ttk.Label(price_group, text="最高:").pack(side=tk.LEFT, padx=(0, 2))
-        self.max_price_var = tk.DoubleVar(value=9999)
+        self.max_price_var = tk.DoubleVar(value=50)
         ttk.Spinbox(price_group, from_=0, to=9999,
                    textvariable=self.max_price_var, width=5).pack(side=tk.LEFT, padx=(0, 5))
+
+        # 市值区间（单位：亿元）
+        cap_group = ttk.LabelFrame(control_frame, text="市值区间(亿)", padding="5")
+        cap_group.pack(side=tk.LEFT, padx=(0, 10))
+
+        ttk.Label(cap_group, text="最低:").pack(side=tk.LEFT, padx=(0, 2))
+        self.min_cap_var = tk.DoubleVar(value=50)
+        ttk.Spinbox(cap_group, from_=0, to=99999,
+                   textvariable=self.min_cap_var, width=5).pack(side=tk.LEFT, padx=(0, 5))
+
+        ttk.Label(cap_group, text="最高:").pack(side=tk.LEFT, padx=(0, 2))
+        self.max_cap_var = tk.DoubleVar(value=200)
+        ttk.Spinbox(cap_group, from_=0, to=99999,
+                   textvariable=self.max_cap_var, width=5).pack(side=tk.LEFT, padx=(0, 5))
 
         # 单股分析区
         single_group = ttk.LabelFrame(control_frame, text="单只股票分析", padding="5")
@@ -1140,6 +1202,8 @@ class BspScannerWindow(tk.Toplevel):
             'history_days': self.history_days_var.get(),
             'min_price': self.min_price_var.get(),
             'max_price': self.max_price_var.get(),
+            'min_cap': self.min_cap_var.get(),
+            'max_cap': self.max_cap_var.get(),
             'use_nesting': self.nesting_var.get(),
             'max_workers': self.workers_var.get(),
             'include_main': self.include_main_var.get(),
@@ -1291,11 +1355,18 @@ class BspScannerWindow(tk.Toplevel):
             params: 包含所有扫描参数的字典，在主线程中预先获取
         """
         try:
+            # 检查是否已取消
+            if not self.is_scanning:
+                self.scan_queue.put(('finished', {'success': 0, 'fail': 0, 'found': 0}))
+                return
+
             # 使用预先获取的参数（避免在后台线程访问 tkinter 变量）
             bsp_days = params['bsp_days']
             history_days = params['history_days']
             min_price = params['min_price']
             max_price = params['max_price']
+            min_cap = params['min_cap']
+            max_cap = params['max_cap']
             use_nesting = params['use_nesting']
             max_workers = params['max_workers']
             config = params['config']
@@ -1307,8 +1378,16 @@ class BspScannerWindow(tk.Toplevel):
                 include_star=params['include_star'],
                 include_bse=params['include_bse'],
                 min_price=min_price,
-                max_price=max_price
+                max_price=max_price,
+                min_market_cap=min_cap,
+                max_market_cap=max_cap
             )
+
+            # 获取列表后再次检查是否已取消
+            if not self.is_scanning:
+                self.scan_queue.put(('log', {'text': '扫描已取消', 'tag': 'warning'}))
+                self.scan_queue.put(('finished', {'success': 0, 'fail': 0, 'found': 0}))
+                return
 
             if stock_list.empty:
                 self.scan_queue.put(('log', {'text': '获取股票列表失败或无符合条件的股票', 'tag': 'error'}))
@@ -1318,7 +1397,7 @@ class BspScannerWindow(tk.Toplevel):
             total = len(stock_list)
             nesting_str = "日线+30分+5分" if use_nesting else "仅日线"
             self.scan_queue.put(('log', {'text': f'获取到 {total} 只可交易股票，使用 {max_workers} 线程并行扫描...', 'tag': 'info'}))
-            self.scan_queue.put(('log', {'text': f'筛选参数: 近{bsp_days}天买点, {history_days}天K线, 价格{min_price}-{max_price}元, {nesting_str}', 'tag': 'info'}))
+            self.scan_queue.put(('log', {'text': f'筛选参数: 近{bsp_days}天买点, {history_days}天K线, 价格{min_price}-{max_price}元, 市值{min_cap}-{max_cap}亿, {nesting_str}', 'tag': 'info'}))
 
             success_count = 0
             fail_count = 0
@@ -1326,7 +1405,8 @@ class BspScannerWindow(tk.Toplevel):
             completed = 0
 
             # 使用线程池并行处理
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            executor = ThreadPoolExecutor(max_workers=max_workers)
+            try:
                 # 提交所有任务
                 future_to_stock = {}
                 for idx, row in stock_list.iterrows():
@@ -1381,11 +1461,29 @@ class BspScannerWindow(tk.Toplevel):
                         fail_count += 1
                         self.scan_queue.put(('log', {'text': f'❌ {code} {name}: {str(e)[:50]}', 'tag': 'error'}))
 
+            finally:
+                # 确保线程池被正确关闭
+                # cancel_futures 参数在 Python 3.9+ 可用
+                try:
+                    executor.shutdown(wait=False, cancel_futures=True)
+                except TypeError:
+                    # Python 3.8 及以下版本
+                    executor.shutdown(wait=False)
+
+            # 在发送完成消息前，先清理局部变量中可能包含的对象引用
+            # 避免线程结束时垃圾回收触发 tkinter 错误
+            future_to_stock.clear()
+            stock_list = None
+            gc.collect()
+
             self.scan_queue.put(('finished', {'success': success_count, 'fail': fail_count, 'found': found_count}))
 
         except Exception as e:
             self.scan_queue.put(('log', {'text': f'扫描出错: {e}', 'tag': 'error'}))
             self.scan_queue.put(('finished', {'success': 0, 'fail': 0, 'found': 0}))
+        finally:
+            # 确保线程结束前进行垃圾回收
+            gc.collect()
 
     def _add_stock_to_list(self, data: dict):
         """添加股票到列表"""
@@ -1635,6 +1733,21 @@ class BspScannerWindow(tk.Toplevel):
         """窗口关闭"""
         if self.is_scanning:
             self.stop_scan()
+            # 等待扫描线程结束
+            if self.scan_thread and self.scan_thread.is_alive():
+                self.scan_thread.join(timeout=2.0)
+
+        if self.is_analyzing:
+            self.is_analyzing = False
+            if self.analysis_thread and self.analysis_thread.is_alive():
+                self.analysis_thread.join(timeout=2.0)
+
+        # 清理缓存，避免持有大量对象
+        self.stock_cache.clear()
+        self.stock_data.clear()
+
+        # 强制垃圾回收
+        gc.collect()
 
         if self in BspScannerWindow.instances:
             BspScannerWindow.instances.remove(self)

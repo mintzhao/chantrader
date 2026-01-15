@@ -84,14 +84,14 @@ KL_TYPE_NAME_EN = {
     KL_TYPE.K_1M: "1min",
 }
 
-# 预设级别组合
+# 预设级别组合（相邻级别间相差约5根K线）
 PRESET_LEVEL_COMBOS = {
-    "日线 + 60分钟": [KL_TYPE.K_DAY, KL_TYPE.K_60M],
-    "日线 + 60分钟 + 15分钟": [KL_TYPE.K_DAY, KL_TYPE.K_60M, KL_TYPE.K_15M],
+    # 4级别组合
+    "日线 + 30分钟 + 5分钟 + 1分钟": [KL_TYPE.K_DAY, KL_TYPE.K_30M, KL_TYPE.K_5M, KL_TYPE.K_1M],
+    "周线 + 日线 + 30分钟 + 5分钟": [KL_TYPE.K_WEEK, KL_TYPE.K_DAY, KL_TYPE.K_30M, KL_TYPE.K_5M],
+    # 3级别组合
     "日线 + 30分钟 + 5分钟": [KL_TYPE.K_DAY, KL_TYPE.K_30M, KL_TYPE.K_5M],
-    "周线 + 日线": [KL_TYPE.K_WEEK, KL_TYPE.K_DAY],
-    "周线 + 日线 + 60分钟": [KL_TYPE.K_WEEK, KL_TYPE.K_DAY, KL_TYPE.K_60M],
-    "60分钟 + 15分钟 + 5分钟": [KL_TYPE.K_60M, KL_TYPE.K_15M, KL_TYPE.K_5M],
+    "周线 + 日线 + 30分钟": [KL_TYPE.K_WEEK, KL_TYPE.K_DAY, KL_TYPE.K_30M],
     "30分钟 + 5分钟 + 1分钟": [KL_TYPE.K_30M, KL_TYPE.K_5M, KL_TYPE.K_1M],
 }
 
@@ -369,7 +369,7 @@ class MultiLevelViewerWindow(tk.Toplevel):
 
         # 级别组合选择
         ttk.Label(control_frame, text="级别组合:").pack(side=tk.LEFT, padx=(0, 5))
-        self.level_combo_var = tk.StringVar(value="日线 + 60分钟 + 15分钟")
+        self.level_combo_var = tk.StringVar(value="日线 + 30分钟 + 5分钟 + 1分钟")
         self.level_combo = ttk.Combobox(
             control_frame, textvariable=self.level_combo_var,
             values=list(PRESET_LEVEL_COMBOS.keys()), width=25, state="readonly"
@@ -587,7 +587,8 @@ class MultiLevelViewerWindow(tk.Toplevel):
     def calc_days_for_level(self, kl_type: KL_TYPE, periods: int) -> int:
         """根据级别计算需要的天数"""
         if kl_type == KL_TYPE.K_1M:
-            return min(max(periods // 240 + 1, 1), 5)
+            # 1分钟K线：每天约240根，至少请求5天数据确保足够
+            return max(periods // 240 + 3, 5)
         elif kl_type == KL_TYPE.K_5M:
             return max(periods // 48 + 5, 5)
         elif kl_type == KL_TYPE.K_15M:
@@ -673,18 +674,29 @@ class MultiLevelViewerWindow(tk.Toplevel):
                 else:
                     data_src = DATA_SRC.BAO_STOCK
 
-                # 创建 CChan 对象
-                chan = CChan(
-                    code=code,
-                    begin_time=begin_time,
-                    end_time=None,
-                    data_src=data_src,
-                    lv_list=[kl_type],
-                    config=config,
-                    autype=AUTYPE.QFQ,
-                )
+                try:
+                    # 创建 CChan 对象
+                    chan = CChan(
+                        code=code,
+                        begin_time=begin_time,
+                        end_time=None,
+                        data_src=data_src,
+                        lv_list=[kl_type],
+                        config=config,
+                        autype=AUTYPE.QFQ,
+                    )
 
-                self.chan_dict[kl_type] = chan
+                    # 检查数据有效性
+                    kl_data = chan[0]
+                    kl_count = len(list(kl_data))
+                    if kl_count < 10:
+                        raise Exception(f"{level_name}数据不足(仅{kl_count}根K线)，请检查网络或稍后重试")
+
+                    self.chan_dict[kl_type] = chan
+
+                except Exception as e:
+                    error_msg = f"{level_name}分析失败: {str(e)}"
+                    raise Exception(error_msg)
 
             # 在主线程更新UI
             self.after(0, lambda: self._on_analysis_done(code))
@@ -870,8 +882,9 @@ class MultiLevelViewerWindow(tk.Toplevel):
             dpi = 100
 
             # 为每个级别单独绑制，然后组合
-            # 计算每个级别的高度
-            level_height = max(canvas_height / dpi / num_levels, 3)
+            # 计算每个级别的高度（4级别时适当压缩）
+            min_level_height = 2.5 if num_levels >= 4 else 3
+            level_height = max(canvas_height / dpi / num_levels, min_level_height)
             fig_width = max(canvas_width / dpi, 10)
 
             # 计算子图高度比例
@@ -1206,7 +1219,7 @@ class MultiLevelViewerWindow(tk.Toplevel):
             self.bsp_text.insert(tk.END, "\n")
 
     def analyze_interval_nesting(self):
-        """分析区间套"""
+        """分析区间套（支持2-4级别共振）"""
         self.nesting_text.delete(1.0, tk.END)
 
         if len(self.current_levels) < 2:
@@ -1223,7 +1236,6 @@ class MultiLevelViewerWindow(tk.Toplevel):
             level_name = self.get_level_name(kl_type)
 
             if len(kl_data.bs_point_lst) > 0:
-                # 获取最近的买点和卖点
                 buy_points = [bsp for bsp in kl_data.bs_point_lst.bsp_iter() if bsp.is_buy]
                 sell_points = [bsp for bsp in kl_data.bs_point_lst.bsp_iter() if not bsp.is_buy]
 
@@ -1240,64 +1252,73 @@ class MultiLevelViewerWindow(tk.Toplevel):
             self.nesting_text.insert(tk.END, "各级别均无买卖点\n")
             return
 
-        # 分析区间套共振
-        self.nesting_text.insert(tk.END, "【区间套共振分析】\n\n")
+        total_levels = len(self.current_levels)
+        self.nesting_text.insert(tk.END, f"【{total_levels}级别区间套共振分析】\n\n")
 
-        # 检查买点共振
-        buy_resonance = []
+        # 分析买点共振
+        buy_resonance = self._collect_resonance(level_bsp_info, is_buy=True)
+        self._display_resonance(buy_resonance, is_buy=True, total_levels=total_levels)
+
+        # 分析卖点共振
+        sell_resonance = self._collect_resonance(level_bsp_info, is_buy=False)
+        self._display_resonance(sell_resonance, is_buy=False, total_levels=total_levels)
+
+    def _collect_resonance(self, level_bsp_info: dict, is_buy: bool) -> list:
+        """收集买点或卖点共振信息"""
+        resonance = []
+        key = 'buy' if is_buy else 'sell'
         for level_name, info in level_bsp_info.items():
-            if info['buy']:
-                bsp = info['buy']
-                kl_count = info['kl_count']
-                recency = (kl_count - bsp.klu.idx) / kl_count  # 位置百分比
-                bsp_type = bsp.type2str()
-                buy_resonance.append({
-                    'level': level_name,
-                    'type': bsp_type,
-                    'price': bsp.bi.get_end_val(),
-                    'recency': recency
-                })
-
-        if buy_resonance:
-            self.nesting_text.insert(tk.END, "买点信号:\n")
-            for br in buy_resonance:
-                recent_str = "近期" if br['recency'] < 0.1 else "较早"
-                self.nesting_text.insert(tk.END,
-                    f"  {br['level']}: {br['type']}类买 @{br['price']:.2f} ({recent_str})\n")
-
-            # 判断共振强度
-            if len(buy_resonance) >= 2:
-                recent_count = sum(1 for br in buy_resonance if br['recency'] < 0.1)
-                if recent_count >= 2:
-                    self.nesting_text.insert(tk.END, "\n  ★ 多级别买点共振！关注做多机会\n")
-            self.nesting_text.insert(tk.END, "\n")
-
-        # 检查卖点共振
-        sell_resonance = []
-        for level_name, info in level_bsp_info.items():
-            if info['sell']:
-                bsp = info['sell']
+            if info[key]:
+                bsp = info[key]
                 kl_count = info['kl_count']
                 recency = (kl_count - bsp.klu.idx) / kl_count
-                bsp_type = bsp.type2str()
-                sell_resonance.append({
+                resonance.append({
                     'level': level_name,
-                    'type': bsp_type,
+                    'type': bsp.type2str(),
                     'price': bsp.bi.get_end_val(),
                     'recency': recency
                 })
+        return resonance
 
-        if sell_resonance:
-            self.nesting_text.insert(tk.END, "卖点信号:\n")
-            for sr in sell_resonance:
-                recent_str = "近期" if sr['recency'] < 0.1 else "较早"
-                self.nesting_text.insert(tk.END,
-                    f"  {sr['level']}: {sr['type']}类卖 @{sr['price']:.2f} ({recent_str})\n")
+    def _display_resonance(self, resonance: list, is_buy: bool, total_levels: int):
+        """显示共振分析结果"""
+        signal_type = "买点" if is_buy else "卖点"
+        action = "做多" if is_buy else "做空/减仓"
 
-            if len(sell_resonance) >= 2:
-                recent_count = sum(1 for sr in sell_resonance if sr['recency'] < 0.1)
-                if recent_count >= 2:
-                    self.nesting_text.insert(tk.END, "\n  ★ 多级别卖点共振！关注做空/减仓\n")
+        if not resonance:
+            self.nesting_text.insert(tk.END, f"{signal_type}信号: 无\n\n")
+            return
+
+        self.nesting_text.insert(tk.END, f"{signal_type}信号:\n")
+        for r in resonance:
+            recent_str = "★近期" if r['recency'] < 0.1 else "较早"
+            self.nesting_text.insert(tk.END,
+                f"  {r['level']}: {r['type']}类 @{r['price']:.2f} ({recent_str})\n")
+
+        # 计算共振强度
+        recent_count = sum(1 for r in resonance if r['recency'] < 0.1)
+        total_count = len(resonance)
+
+        # 根据级别数和共振数判断强度
+        if recent_count >= 4:
+            strength = "★★★★ 极强共振"
+            desc = f"4级别{signal_type}共振！强烈{action}信号"
+        elif recent_count >= 3:
+            strength = "★★★ 强共振"
+            desc = f"3级别{signal_type}共振！关注{action}机会"
+        elif recent_count >= 2:
+            strength = "★★ 中等共振"
+            desc = f"2级别{signal_type}共振，可关注{action}"
+        elif total_count >= 2:
+            strength = "★ 弱共振"
+            desc = f"有{signal_type}但时间分散，谨慎操作"
+        else:
+            strength = ""
+            desc = ""
+
+        if strength:
+            self.nesting_text.insert(tk.END, f"\n  {strength}\n  {desc}\n")
+        self.nesting_text.insert(tk.END, "\n")
 
     def show_interval_nesting_info(self):
         """显示区间套原理说明"""

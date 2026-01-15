@@ -119,7 +119,15 @@ class CAkshare(CCommonStockApi):
             # 注意：分钟数据最多获取最近5个交易日的数据
             # 将日期格式从 "20250110" 转换为 "2025-01-10 09:30:00" 格式
             start_datetime = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:]} 09:30:00"
-            end_datetime = f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:]} 15:00:00"
+
+            # 修复：end_date 需要使用当前实际日期，而非默认的 20991231
+            from datetime import datetime as dt
+            if end_date == "20991231" or int(end_date) > int(dt.now().strftime("%Y%m%d")):
+                # 使用当前日期作为结束日期
+                actual_end = dt.now().strftime("%Y-%m-%d")
+            else:
+                actual_end = f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:]}"
+            end_datetime = f"{actual_end} 15:00:00"
 
             df = ak.stock_zh_a_hist_min_em(
                 symbol=code_num,
@@ -134,9 +142,11 @@ class CAkshare(CCommonStockApi):
                 # 按时间排序
                 df = df.sort_values('时间')
 
-                # 过滤无效数据：开盘价为0的数据是无效的
-                # AkShare 分钟数据可能返回开盘=0的异常行
-                df = df[df['开盘'] > 0]
+                # 修复：AkShare 1分钟K线开盘价可能为0，用收盘价填充
+                df.loc[df['开盘'] == 0, '开盘'] = df['收盘']
+
+                # 过滤无效数据：收盘价为0的才是真正无效的
+                df = df[df['收盘'] > 0]
 
             # 遍历每一行生成K线单元
             for _, row in df.iterrows():
